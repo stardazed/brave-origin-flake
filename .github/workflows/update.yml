@@ -15,10 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
+        uses: DeterminateSystems/nix-installer-action@v22
         with:
           extra-conf: |
             experimental-features = nix-command flakes
@@ -32,8 +32,9 @@ jobs:
         id: update
         run: |
           chmod +x scripts/update-version.sh
+          UPDATE_OUTPUT=$(mktemp)
 
-          if ./scripts/update-version.sh 2>&1 | tee update_output.txt; then
+          if nix develop .#default -c ./scripts/update-version.sh 2>&1 | tee "$UPDATE_OUTPUT"; then
             echo "update_success=true" >> $GITHUB_OUTPUT
 
             if git diff --quiet versions.json; then
@@ -46,7 +47,7 @@ jobs:
           else
             echo "update_success=false" >> $GITHUB_OUTPUT
             echo "=== Update script failed ==="
-            cat update_output.txt
+            cat "$UPDATE_OUTPUT"
             exit 1
           fi
 
@@ -60,7 +61,7 @@ jobs:
 
       - name: Create Pull Request
         if: steps.update.outputs.has_changes == 'true'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore: update brave-origin to ${{ steps.update.outputs.new_version }}"

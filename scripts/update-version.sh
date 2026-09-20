@@ -1,15 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ReportError() {
+    local exitCode=$?
+    local failedCommand=$1
+    local lineNumber=$2
+
+    printf 'Update failed at line %s while running: %s (exit code %s)\n' \
+        "$lineNumber" "$failedCommand" "$exitCode" >&2
+    exit "$exitCode"
+}
+
+trap 'ReportError "$BASH_COMMAND" "$LINENO"' ERR
+
 # URL of the APT repository packages file
 PACKAGES_URL="https://brave-browser-apt-release.s3.brave.com/dists/stable/main/binary-amd64/Packages"
 
-# Fetch the Packages file
-PACKAGES=$(curl -s "$PACKAGES_URL")
+# Fetch the Packages file.  A silent HTTP error used to be treated as an empty
+# package index, which hid the actual reason the scheduled update failed.
+if ! PACKAGES=$(curl --fail --location --retry 3 --silent --show-error "$PACKAGES_URL"); then
+    echo "Could not download the Brave APT package index: $PACKAGES_URL" >&2
+    exit 1
+fi
 
 # Extract the version and filename for brave-origin
 # We look for the brave-origin package block
-BLOCK=$(echo "$PACKAGES" 2>/dev/null | awk -v RS= '/Package: brave-origin/{print; exit}' || true)
+BLOCK=$(awk -v RS= '$1 == "Package:" && $2 == "brave-origin" { print; exit }' <<< "$PACKAGES")
 
 if [ -z "$BLOCK" ]; then
     echo "Could not find brave-origin in APT repository."
@@ -39,7 +55,20 @@ fi
 
 echo "Fetching new version and generating hash..."
 # We use nix store prefetch-file to get the SRI hash
-HASH=$(nix store prefetch-file --json "$DEB_URL" | jq -r .hash)
+if ! PREFETCH_RESULT=$(nix store prefetch-file --json "$DEB_URL"); then
+    echo "Could not prefetch the Brave package: $DEB_URL" >&2
+    exit 1
+fi
+
+if ! HASH=$(printf '%s\n' "$PREFETCH_RESULT" | jq --exit-status --raw-output '.hash'); then
+    echo "Could not read the hash from Nix's prefetch result." >&2
+    exit 1
+fi
+
+if [ -z "$HASH" ] || [ "$HASH" = "null" ]; then
+    echo "Could not generate a hash for $DEB_URL."
+    exit 1
+fi
 
 # Update versions.json
 cat <<EOF > versions.json
