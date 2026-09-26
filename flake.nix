@@ -38,6 +38,7 @@
               archives = {
                 ${system} = {
                   url = braveOriginData.url;
+                  hash = braveOriginData.hash;
                   sha256 = braveOriginData.hash;
                 };
               };
